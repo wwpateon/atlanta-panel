@@ -1,27 +1,41 @@
-// Binance API ile gelen webhook BUY/SELL emirlerini otomatik işleme alır.
+// Binance canlı emir webhook.js
 
-import axios from 'axios';
+import axios from 'axios'; import crypto from 'crypto';
 
-const API_KEY = process.env.BINANCE_API_KEY; const API_SECRET = process.env.BINANCE_API_SECRET;
+const BINANCE_API_KEY = process.env.BINANCE_API_KEY; const BINANCE_API_SECRET = process.env.BINANCE_API_SECRET; const BASE_URL = 'https://fapi.binance.com';
 
-export default async function handler(req, res) { if (req.method !== 'POST') { return res.status(405).json({ message: 'Sadece POST isteği kabul edilir.' }); }
+function sign(queryString, secret) { return crypto.createHmac('sha256', secret).update(queryString).digest('hex'); }
 
-const { action, symbol, amount, leverage, tp, sl } = req.body;
+export default async function handler(req, res) { if (req.method !== 'POST') { return res.status(405).json({ message: 'Sadece POST istekleri kabul edilir.' }); }
 
-if (!action || !symbol || !amount || !leverage) { return res.status(400).json({ message: 'Eksik parametre.' }); }
+try { const { action, symbol, amount, leverage } = req.body;
 
-try { const side = action.toLowerCase() === 'buy' ? 'BUY' : 'SELL';
+if (!action || !symbol || !amount || !leverage) {
+  return res.status(400).json({ message: 'Eksik parametre var!' });
+}
 
-// Emri örnek olarak logluyoruz (gerçekte Binance API'ye emir gönderilecek)
-console.log(`Emir alındı: ${side} - ${symbol} - Miktar: ${amount} - Kaldıraç: ${leverage}x`);
+const side = action.toUpperCase() === 'BUY' ? 'BUY' : 'SELL';
 
-// Binance'a emir göndermek istesek burada axios ile bir POST yapılır
-// Örnek:
-// await axios.post('https://api.binance.com/fapi/v1/order', {...}, { headers: {...} })
+// Kaldıraç ayarla
+const timestampLev = Date.now();
+const levQuery = `symbol=${symbol}&leverage=${leverage}&timestamp=${timestampLev}`;
+const levSignature = sign(levQuery, BINANCE_API_SECRET);
 
-return res.status(200).json({ message: 'Emir kaydedildi.' });
+await axios.post(`${BASE_URL}/fapi/v1/leverage?${levQuery}&signature=${levSignature}`, {}, {
+  headers: { 'X-MBX-APIKEY': BINANCE_API_KEY },
+});
 
-} catch (error) { console.error('Emir işlenemedi:', error); return res.status(500).json({ message: 'Sunucu hatası.' }); } }
+// Piyasa emri aç
+const timestampOrder = Date.now();
+const orderQuery = `symbol=${symbol}&side=${side}&type=MARKET&quantity=${amount}&timestamp=${timestampOrder}`;
+const orderSignature = sign(orderQuery, BINANCE_API_SECRET);
 
+const orderResult = await axios.post(`${BASE_URL}/fapi/v1/order?${orderQuery}&signature=${orderSignature}`, {}, {
+  headers: { 'X-MBX-APIKEY': BINANCE_API_KEY },
+});
 
+console.log('Binance emir sonucu:', orderResult.data);
+res.status(200).json({ message: 'Emir gönderildi!', result: orderResult.data });
+
+} catch (error) { console.error('Hata:', error.response ? error.response.data : error.message); res.status(500).json({ message: 'Emir gönderilemedi!', error: error.message }); } }
 
